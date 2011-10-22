@@ -14,16 +14,16 @@ see <a href="http://matpalm.com/blog/2011/10/22/collocations">my blog post</a> f
 
     bzcat freebase-wex-2011-09-30-articles.tsv.bz2 | cut -f5 | perl -plne's/\\n\\n/ /g' | sed -es/[\<\>]/\ /g > articles
 
-# extract sentences
+### extract sentences
 
     java -classpath ~/stanford-parser-2011-09-14/stanford-parser.jar edu.stanford.nlp.process.DocumentPreprocessor articles > sentences
 
-# move to hdfs
+### move to hdfs
 
     hadoop -fs mkdir sentences
     hadoop fs -copyFromLocal sentences sentences/sentences
 
-# filter out long terms and urls
+### filter out long terms and urls
 
     hadoop jar ~/contrib/streaming/hadoop-streaming.jar \
      -input sentences -output sentences_sans_url_long_words \
@@ -33,7 +33,7 @@ see <a href="http://matpalm.com/blog/2011/10/22/collocations">my blog post</a> f
 note! seems to be the same sentences repeated 2-3 times (???)
 wrote a pig job to get rid of them...
 
-# extract ngrams
+### extract ngrams
 
     hadoop jar ~/contrib/streaming/hadoop-streaming.jar \
      -input sentences_sans_url_long_words -output unigrams.gz \
@@ -48,55 +48,52 @@ wrote a pig job to get rid of them...
      -mapper "ngrams.py 3" -file ngrams.py \
      -numReduceTasks 0
 
-# sanity check frequency of unigram lengths..
+### sanity check frequency of unigram lengths..
 
- $ cat unigram_length_freq.pig
- set default_parallel 24;
- register 'pig/piggybank.jar';
- define len org.apache.pig.piggybank.evaluation.string.LENGTH;
- unigrams = load 'unigrams.gz' as (t1:chararray);
- lengths = foreach unigrams generate len(t1) as length;
- grped = group lengths by length;
- freqs = foreach grped generate group as length, COUNT(lengths) as freq;
- store freqs into 'length_freqs';
+   -- cat unigram_length_freq.pig
+   set default_parallel 24;
+   register 'pig/piggybank.jar';
+   define len org.apache.pig.piggybank.evaluation.string.LENGTH;
+   unigrams = load 'unigrams.gz' as (t1:chararray);
+   lengths = foreach unigrams generate len(t1) as length;
+   grped = group lengths by length;
+   freqs = foreach grped generate group as length, COUNT(lengths) as freq;
+   store freqs into 'length_freqs';
 
-$ hfs -cat /user/hadoop/length_freqs/*  |sort -n
-1       180552974
-2       218916294
-3       229329881
-4       171347574
-5       154830964
-6       111346344
-7       104234492
-8       79782236
-9       54408813
-10      36727785
-11      19836470
-12      12233497
-13      6588796
-14      3133951
-15      1394993
-...
-93      14
-94      18
-95      39
-96      25
-97      14
-98      13
-99      15
-100     25
+   $ hfs -cat /user/hadoop/length_freqs/*  |sort -n
+   1       180552974
+   2       218916294
+   3       229329881
+   4       171347574
+   5       154830964
+   6       111346344
+   7       104234492
+   8       79782236
+   9       54408813
+   10      36727785
+   11      19836470
+   12      12233497
+   13      6588796
+   14      3133951
+   15      1394993
+   ...
+   93      14
+   94      18
+   95      39
+   96      25
+   97      14
+   98      13
+   99      15
+   100     25
 
-# bigram mutual info
+### n-gram quantiles
 
-               	P(x, y)
-I (x; y) = log2 P(x) x P(y)
-
-# n-gram quantiles
-
+<pre>
 wget https://github.com/downloads/linkedin/datafu/datafu-0.0.1.tar.gz
 tar zxf datafu-0.0.1.tar.gz
 cd datafu-0.0.1
 ant
+</pre>
 
 -- quantiles.pig
 set default_parallel 36;
