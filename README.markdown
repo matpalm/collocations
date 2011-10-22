@@ -1,56 +1,54 @@
 see <a href="http://matpalm.com/blog/2011/10/22/collocations">my blog post</a> for more info
 
-$ cat ~/pig.props
-default_parallel = 60
-$ pig -P pig.props -f script.pig
-
 # stanford parser
 
-cd /mnt
-wget http://nlp.stanford.edu/downloads/stanford-parser-2011-09-14.tgz
-tar zxf stanford-parser-2011-09-14.tgz
+ cd /mnt
+ wget http://nlp.stanford.edu/downloads/stanford-parser-2011-09-14.tgz
+ tar zxf stanford-parser-2011-09-14.tgz
 
 # freebase dump
 
-wget http://download.freebase.com/wex/latest/freebase-wex-2011-09-30-articles.tsv.bz2  # 7/8gb
+ wget http://download.freebase.com/wex/latest/freebase-wex-2011-09-30-articles.tsv.bz2  # 7/8gb
 
 # freebase just text to articles without newlines or <, >
-bzcat freebase-wex-2011-09-30-articles.tsv.bz2 | cut -f5 | perl -plne's/\\n\\n/ /g' | sed -es/[\<\>]/\ /g > articles
+ bzcat freebase-wex-2011-09-30-articles.tsv.bz2 | cut -f5 | perl -plne's/\\n\\n/ /g' | sed -es/[\<\>]/\ /g > articles
+
 # extract sentences
-java -classpath ~/stanford-parser-2011-09-14/stanford-parser.jar edu.stanford.nlp.process.DocumentPreprocessor articles > sentences
+ java -classpath ~/stanford-parser-2011-09-14/stanford-parser.jar edu.stanford.nlp.process.DocumentPreprocessor articles > sentences
 
 # move to hdfs
 
-hadoop -fs mkdir sentences
-hadoop fs -copyFromLocal sentences sentences/sentences
+ hadoop -fs mkdir sentences
+ hadoop fs -copyFromLocal sentences sentences/sentences
 
 # filter out long terms and urls
 
-hadoop jar ~/contrib/streaming/hadoop-streaming.jar \
- -input sentences -output sentences_sans_url_long_words \
- -mapper cut_huge_words.py -file cut_huge_words.py \
- -numReduceTasks 0
+ hadoop jar ~/contrib/streaming/hadoop-streaming.jar \
+  -input sentences -output sentences_sans_url_long_words \
+  -mapper cut_huge_words.py -file cut_huge_words.py \
+  -numReduceTasks 0
 
 note! seems to be the same sentences repeated 2-3 times (???)
 wrote a pig job to get rid of them...
 
 # extract ngrams
 
-hadoop jar ~/contrib/streaming/hadoop-streaming.jar \
- -input sentences_sans_url_long_words -output unigrams.gz \
- -mapper "ngrams.py 1" -file ngrams.py \
- -numReduceTasks 0
-hadoop jar ~/contrib/streaming/hadoop-streaming.jar \
- -input sentences_sans_url_long_words -output bigrams.gz \
- -mapper "ngrams.py 2" -file ngrams.py \
- -numReduceTasks 0
-hadoop jar ~/contrib/streaming/hadoop-streaming.jar \
- -input sentences_sans_url_long_words -output trigrams.gz \
- -mapper "ngrams.py 3" -file ngrams.py \
- -numReduceTasks 0
+ hadoop jar ~/contrib/streaming/hadoop-streaming.jar \
+  -input sentences_sans_url_long_words -output unigrams.gz \
+  -mapper "ngrams.py 1" -file ngrams.py \
+  -numReduceTasks 0
+ hadoop jar ~/contrib/streaming/hadoop-streaming.jar \
+  -input sentences_sans_url_long_words -output bigrams.gz \
+  -mapper "ngrams.py 2" -file ngrams.py \
+  -numReduceTasks 0
+ hadoop jar ~/contrib/streaming/hadoop-streaming.jar \
+  -input sentences_sans_url_long_words -output trigrams.gz \
+  -mapper "ngrams.py 3" -file ngrams.py \
+  -numReduceTasks 0
 
 # sanity check frequency of unigram lengths..
-$ cat unigram_length_freq.pig
+
+ $ cat unigram_length_freq.pig
  set default_parallel 24;
  register 'pig/piggybank.jar';
  define len org.apache.pig.piggybank.evaluation.string.LENGTH;
