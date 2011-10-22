@@ -50,6 +50,7 @@ wrote a pig job to get rid of them...
 
 ### sanity check frequency of unigram lengths..
 
+<pre>
    -- cat unigram_length_freq.pig
    set default_parallel 24;
    register 'pig/piggybank.jar';
@@ -85,8 +86,11 @@ wrote a pig job to get rid of them...
    98      13
    99      15
    100     25
+</pre>
 
 ### n-gram quantiles
+
+get datafu
 
 <pre>
 wget https://github.com/downloads/linkedin/datafu/datafu-0.0.1.tar.gz
@@ -95,6 +99,9 @@ cd datafu-0.0.1
 ant
 </pre>
 
+extract quantiles
+
+<pre>
 -- quantiles.pig
 set default_parallel 36;
 register 'datafu-0.0.1/dist/datafu-0.0.1.jar';
@@ -113,14 +120,20 @@ unigrams = load 'unigrams.gz' as (t1:chararray);
 quantiles(unigrams, t1, unigrams_quantiles);
 bigrams = load 'bigrams.gz' as (t1:chararray, t2:chararray);
 quantiles(bigrams, '(t1,t2)', bigrams_quantiles);
+</pre>
 
+result
+
+<pre>
 $ hfs -cat unigrams_quantiles/part-r-00000
 12.0    14.0    16.0    20.0    25.0    32.0    45.0    69.0    129.0   392.0   465.0   562.0   693.0   882.0   1177.0  1679.0  2574.0  4703.0  12582.0 7.4528781E7
 hadoop@ip-10-17-216-123:~$ hfs -cat bigrams_quantiles/part-r-00000
 6.0     7.0     8.0     10.0    11.0    14.0    19.0    27.0    43.0    99.0    112.0   129.0   151.0   180.0   222.0   286.0   396.0   621.0   1303.0  1.2184383E7
+</pre>
 
-# extract ngram_frequecy and counts
+### extract ngram_frequecy and counts
 
+<pre>
 -- ngram_freq_and_count.pig
 define calc_frequencies_and_count(A, key, F, C) returns void {
  grped = group $A by $key;
@@ -136,13 +149,70 @@ bigrams = load 'bigrams_' as (t1:chararray, t2:chararray);
 calc_frequencies_and_count(bigrams, '(t1,t2)', bigram_f, bigram_c);
 trigrams = load 'trigrams_' as (t1:chararray, t2:chararray, t3:chararray);
 calc_frequencies_and_count(trigrams, '(t1,t2,t3)', trigram_f, trigram_c)
+</pre>
 
-so rerun the mutual info but with various dumps of support...
+### high frequency ngrams 
 
-# bigram mutual info
+<pre>
+-- top_ngrams_by_freq.pig
+n = load 'unigram_f' as (t1:chararray, freq:long);
+s = order n by freq desc;
+s = limit s by 10;
+store s into 'unigram_top10';
+n = load 'bigram_f' as (t1:chararray, t2:chararray, freq:long);
+s = order n by freq desc;
+s = limit s by 10;
+store s into 'bigram_top10';
+n = load 'trigram_f' as (t1:chararray, t2:chararray, t3:chararray, freq:long);
+s = order n by freq desc;
+s = limit s by 10;
+store s into 'trigram_top10';
+</pre>
 
+result
+
+<pre>
+$ hfs -cat /user/hadoop/unigram_top10/*
+the  74528781
+,    70605655
+.    54902186
+of   41340440
+and  34962970
+in   30111358
+to   24904598
+a    24600822
+was  14322281
+is   13485661
+
+$ hfs -cat /user/hadoop/bigram_top10/*
+of the  12184383
+in the  8042527
+, and   7223201
+, the   4756776
+to the  4077474
+is a    2913727
+and the 2740848
+on the  2657395
+| |     2615179
+for the 2395016
+
+$ hfs -cat /user/hadoop/trigram_top10/*
+| | |             805094
+, and the 	  767814
+one of the 	  617374
+-RRB- is a 	  562709
+| - | 	 	  516652
+as well as 	  504222
+the United States 504124
+part of the       413992
+| align =         352575
+-RRB- , and       290050
+</pre>
+
+### bigram mutual info
+
+<pre>
 -- bigram_mutual_info.pig
-set default_parallel 60;
 
 -- load up frequencies and counts
 unigram_f = load 'unigram_f' as (t1:chararray, freq:long);
@@ -193,7 +263,11 @@ sup = filter bigram_mi by t1_t2_f > 250000;
 sorted = order sup by mi desc;
 top_10k = limit sorted 10000;
 store top_10k into 'bigram_mutual_info__top10k_s250k.gz';
+</pre>
 
+result
+
+<pre>
 $ hfs -cat /user/hadoop/bigram_mutual_info__top10k_s5k.gz/part-r-00000.gz | gunzip | head
 mutual_info             t1      t2        t12_f   bigram_c        t1_f    t2_f    unigram_c
 12.397738367262338      Burkina Faso      5417    1331695519      5687    5679    1386868488
@@ -231,10 +305,12 @@ hadoop@ip-10-17-216-123:~$ hfs -cat /user/hadoop/bigram_mutual_info__top10k_s250
 5.051402270277741       has     been    650292  1331695519      3140106 1914404 1386868488
 4.813860313764799       =       ``      638122  1331695519      1152961 6488163 1386868488
 
-# trigram mutual info
+</pre>
 
+### trigram mutual info
+
+<pre>
 -- trigram_mutual_info.pig
-set default_parallel 60;
 
 -- load up frequencies and counts
 unigram_f = load 'unigram_f' as (t1:chararray, freq:long);
@@ -283,22 +359,39 @@ mutual_info = foreach j5 {
 positive_mutual_info = filter mutual_info by mi>0;
 sorted = order positive_mutual_info by mi desc;
 store sorted into 'trigram_mutual_info';
+</pre>
 
-# random other bits and pieces
+result (support 100)
 
--- top_ngrams_by_freq.pig
-n = load 'unigram_f' as (t1:chararray, freq:long);
-s = order n by freq desc;
-s = limit s by 10;
-store s into 'unigram_top10';
-n = load 'bigram_f' as (t1:chararray, t2:chararray, freq:long);
-s = order n by freq desc;
-s = limit s by 10;
-store s into 'bigram_top10';
-n = load 'trigram_f' as (t1:chararray, t2:chararray, t3:chararray, freq:long);
-s = order n by freq desc;
-s = limit s by 10;
-store s into 'trigram_top10';
+<pre>
+Rychnov	nad	Kněžnou	118	22.424602293608007
+DoualaPays	:	CamerounAdresse	102	22.406178326732338
+Bajaga		i	Instruktori	118	22.385818095638346
+d'activité	:	Principaux	128	22.367493053820052
+Feasa		ar	Éirinn		121	22.214224197726296
+Séré		de	Rivières	109	22.15457802657505
+Tiako		I	Madagasikara	134	22.149050193285223
+African-Eurasian	Migratory	Waterbirds	145	22.103210375266972
+Kw			`		alaams		110	22.09419756064452
+Ponts			et		Chaussées	106	22.084725134502357
+</pre>
+
+result (support 1000)
+
+<pre>
+Abdu	`	l-Bahá	1011	549844.1721224862
+Dravida	Munnetra	Kazhagam	1043	519490.7200429379
+Ab	urbe		condita		1059	392353.38202227355
+Dar	es		Salaam		1130	280500.2163137233
+Kitts	and		Nevis		1095	266394.29635043273
+Procter	&		Gamble		1255	256374.4275852869
+Antigua	and		Barbuda		1290	245226.03987268283
+agnostic		or		atheist	1068	235635.2233948117
+Vasco			da		Gama	1401	224613.90052744994
+Ku			Klux		Klan	1944	224200.36813564494
+</pre>
+
+### graphs
 
 pig -f bigram_mutual_info.pig
 pig -f trigram_mutual_info.pig
