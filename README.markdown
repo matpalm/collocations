@@ -1,16 +1,16 @@
 see <a href="http://matpalm.com/blog/2011/10/22/collocations">my blog post</a> for more info
 
-# stanford parser
+### stanford parser
 
     cd /mnt
     wget http://nlp.stanford.edu/downloads/stanford-parser-2011-09-14.tgz
     tar zxf stanford-parser-2011-09-14.tgz
 
-# freebase dump
+### freebase dump
 
     wget http://download.freebase.com/wex/latest/freebase-wex-2011-09-30-articles.tsv.bz2  # 7/8gb
 
-# freebase just text to articles without newlines or <, >
+### freebase just text to articles without newlines or <, >
 
     bzcat freebase-wex-2011-09-30-articles.tsv.bz2 | cut -f5 | perl -plne's/\\n\\n/ /g' | sed -es/[\<\>]/\ /g > articles
 
