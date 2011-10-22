@@ -1,0 +1,614 @@
+Mutual information is a measure of word association. It compares the
+probability of a group of words to occur together
+(joint probability) to their probabilities of occur-
+ring independently. The bigram mutual informa-
+tion is known as [Church and Hanks 1990]:
+
+               	P (x, y)
+I (x; y) = log2 P ( x ) x P(y)
+
+
+w here x and y are two words in the corpus, and
+I (x;y) is the mutual information of these two
+w ords (in this order). The mutual information of
+a t rigram is defined as [Su et al. 1991]:
+
+                                    PD(x,y,z)
+           	I (x; y; z) = log 2 PI(x,y,z)
+
+where PD(X,y,z) -- P(x,y,z) is the probability for x, y and z to occur jointly (Dependently), 
+and PI(x, y, z) is the probability for x, y and z to occur by chance (Independently), 
+i.e. PI(x, y, z) = P(x) x P(y) x P (z) + P(x) x P(y,z) + P(x,y) x P(z)
+
+trigram
+
+mi(x,y,z) = PD(x,y,z) / PI(x,y,z)
+PD(x,y,z) = f(x,y,z) / #trigrams
+PI(x,y,z) = P(x) x P(y) x P(z) + P(x) x P(y,z) + P(x,y) x P(z)
+
+
+## method
+
+elastic-mapreduce --create --alive  --instance-count 5 --instance-type cc1.4xlarge \
+ --bootstrap-action s3://elasticmapreduce/bootstrap-actions/run-if --args "instance.isMaster=true,s3://mkelcey/ba/install_latest_pig.sh" \
+ --bootstrap-action s3://elasticmapreduce/bootstrap-actions/install-ganglia
+
+elastic-mapreduce -j XYZ --put *py
+
+$ cat ~/pig.props
+default_parallel = 60
+$ pig -P pig.props -f script.pig
+
+# general
+sudo apt-get install -f emacs22-nox
+
+# stanford parser
+cd /mnt
+wget http://nlp.stanford.edu/downloads/stanford-parser-2011-09-14.tgz
+tar zxf stanford-parser-2011-09-14.tgz
+
+# freebase dump
+wget http://download.freebase.com/wex/latest/freebase-wex-2011-09-30-articles.tsv.bz2  # 7/8gb
+
+# freebase just text to articles without newlines or <, >
+bzcat freebase-wex-2011-09-30-articles.tsv.bz2 | cut -f5 | perl -plne's/\\n\\n/ /g' | sed -es/[\<\>]/\ /g > articles
+# extract sentences
+java -classpath ~/stanford-parser-2011-09-14/stanford-parser.jar edu.stanford.nlp.process.DocumentPreprocessor articles > sentences
+
+# move to hdfs
+hadoop -fs mkdir sentences
+hadoop fs -copyFromLocal sentences sentences/sentences
+
+# filter out long terms and urls
+hadoop jar ~/contrib/streaming/hadoop-streaming.jar \
+ -input sentences -output sentences_sans_url_long_words \
+ -mapper cut_huge_words.py -file cut_huge_words.py \
+ -numReduceTasks 0
+
+# note! seems to be the same sentences repeated 2-3 times (???)
+# wrote a pig job to get rid of them...
+
+# extract ngrams
+hadoop jar ~/contrib/streaming/hadoop-streaming.jar \
+ -input sentences_sans_url_long_words -output unigrams.gz \
+ -mapper "ngrams.py 1" -file ngrams.py \
+ -numReduceTasks 0
+hadoop jar ~/contrib/streaming/hadoop-streaming.jar \
+ -input sentences_sans_url_long_words -output bigrams.gz \
+ -mapper "ngrams.py 2" -file ngrams.py \
+ -numReduceTasks 0
+hadoop jar ~/contrib/streaming/hadoop-streaming.jar \
+ -input sentences_sans_url_long_words -output trigrams.gz \
+ -mapper "ngrams.py 3" -file ngrams.py \
+ -numReduceTasks 0
+
+# sanity check frequency of unigram lengths..
+hadoop@ip-10-17-216-123:~$ cat unigram_length_freq.pig
+ set default_parallel 24;
+ register 'pig/piggybank.jar';
+ define len org.apache.pig.piggybank.evaluation.string.LENGTH;
+ unigrams = load 'unigrams.gz' as (t1:chararray);
+ lengths = foreach unigrams generate len(t1) as length;
+ grped = group lengths by length;
+ freqs = foreach grped generate group as length, COUNT(lengths) as freq;
+ store freqs into 'length_freqs';
+
+hadoop@ip-10-17-216-123:~$ hfs -cat /user/hadoop/length_freqs/*  |sort -n
+1       180552974
+2       218916294
+3       229329881
+4       171347574
+5       154830964
+6       111346344
+7       104234492
+8       79782236
+9       54408813
+10      36727785
+11      19836470
+12      12233497
+13      6588796
+14      3133951
+15      1394993
+...
+93      14
+94      18
+95      39
+96      25
+97      14
+98      13
+99      15
+100     25
+
+# bigram mutual info
+
+               	P(x, y)
+I (x; y) = log2 P(x) x P(y)
+
+### n-gram quantiles
+
+wget https://github.com/downloads/linkedin/datafu/datafu-0.0.1.tar.gz
+tar zxf datafu-0.0.1.tar.gz
+cd datafu-0.0.1
+ant
+
+-- quantiles.pig
+set default_parallel 36;
+register 'datafu-0.0.1/dist/datafu-0.0.1.jar';
+define percentiles datafu.pig.stats.Quantile('0.9','0.91','0.92','0.93','0.94','0.95','0.96','0.97','0.98','0.99','0.991','0.992','0.993','0.994','0.995','0.996','0.997','0.998','0.999','1.0');
+define quantiles(A, key, out) returns void {
+ grped_f = group $A by $key;
+ freqs = foreach grped_f generate COUNT($A) as freq;
+ grped = group freqs all; 
+ quantiles = foreach grped {          
+  sorted = order freqs by freq;
+  generate flatten(percentiles(sorted));
+ }
+ store quantiles into '$out';
+}
+unigrams = load 'unigrams.gz' as (t1:chararray);
+quantiles(unigrams, t1, unigrams_quantiles);
+bigrams = load 'bigrams.gz' as (t1:chararray, t2:chararray);
+quantiles(bigrams, '(t1,t2)', bigrams_quantiles);
+
+hadoop@ip-10-17-216-123:~$ hfs -cat unigrams_quantiles/part-r-00000
+12.0    14.0    16.0    20.0    25.0    32.0    45.0    69.0    129.0   392.0   465.0   562.0   693.0   882.0   1177.0  1679.0  2574.0  4703.0  12582.0 7.4528781E7
+hadoop@ip-10-17-216-123:~$ hfs -cat bigrams_quantiles/part-r-00000
+6.0     7.0     8.0     10.0    11.0    14.0    19.0    27.0    43.0    99.0    112.0   129.0   151.0   180.0   222.0   286.0   396.0   621.0   1303.0  1.2184383E7
+
+so rerun the mutual info but with various dumps of support...
+
+set default_parallel 36;
+
+define calc_frequencies(A, key) returns A_f {
+ grped = group $A by $key;
+ $A_f = foreach grped generate flatten(group), COUNT($A) as freq;
+}
+define calc_count(A_f) returns A_c {
+ grped = group $A_f all;
+ $A_c = foreach grped generate SUM($A_f.freq) as count;
+}
+
+unigrams = load 'unigrams.gz' as (t1:chararray);
+unigram_f = calc_frequencies(unigrams, t1);
+unigram_c = calc_count(unigram_f);
+
+bigrams = load 'bigrams.gz' as (t1:chararray, t2:chararray);
+bigram_f = calc_frequencies(bigrams, '(t1,t2)');
+bigram_c = calc_count(bigram_f);
+
+-- only process bigrams with a support of 5000
+bigram_f = filter bigram_f by freq>5000;
+
+-- bigram log likelihood
+-- p(a,b) / ( p(a) * p(b) )
+--  = (f(a,b) / #bigrams) / ( (f(a) / #unigrams) * (f(b) / #unigrams) )
+--  = l(f(a,b)) - l(#bi) - ( (l(f(a)) - l(#uni)) + ( l(f(b)) - l(#uni)))
+--  = l(f(a,b)) - l(#bi) - l(f(a)) -l(f(b)) + 2xl(#uni)
+bigram_joined_1 = join bigram_f by t1, unigram_f by group;
+bigram_joined_2 = join bigram_joined_1 by t2, unigram_f by group;
+bigram_mi = foreach bigram_joined_2 {
+ t1 = bigram_joined_1::bigram_f::group::t1;
+ t2 = bigram_joined_1::bigram_f::group::t2;
+ t1_t2_f = bigram_joined_1::bigram_f::freq;
+ t1_f = bigram_joined_1::unigram_f::freq;
+ t2_f = unigram_f::freq;
+ mutual_info = LOG(t1_t2_f) - LOG(bigram_c.count) - LOG(t1_f) - LOG(t2_f) + 2*LOG(unigram_c.count);
+ generate mutual_info as mi, t1 as t1, t2 as t2, t1_t2_f as t1_t2_f, bigram_c.count as bi_c, t1_f as t1_f, t2_f as t2_f, unigram_c.count as uni_c;
+}
+
+-- dump top 10k, support 5,000
+sorted = order bigram_mi by mi desc;
+top_10k_s5k = limit sorted 10000;
+store top_10k_s5k into 'bigram_mutual_info__top10k_s5k.gz';
+
+-- dump top 10k, support 50,000
+sup = filter bigram_mi by t1_t2_f > 50000;
+sorted = order sup by mi desc;
+top_10k = limit sorted 10000;
+store top_10k into 'bigram_mutual_info__top10k_s50k.gz';
+
+-- dump top 10k, support 250,000
+sup = filter bigram_mi by t1_t2_f > 250000;
+sorted = order sup by mi desc;
+top_10k = limit sorted 10000;
+store top_10k into 'bigram_mutual_info__top10k_s250k.gz';
+
+hadoop@ip-10-17-216-123:~$ hfs -cat /user/hadoop/bigram_mutual_info__top10k_s5k.gz/part-r-00000.gz | gunzip | head
+mutual_info             t1      t2        t12_f   bigram_c        t1_f    t2_f    unigram_c
+12.397738367262338      Burkina Faso      5417    1331695519      5687    5679    1386868488
+12.136124155313361      Rotten  Tomatoes  5695    1331695519      7264    6072    1386868488
+12.113289381980444      Kuala   Lumpur    6441    1331695519      7847    6504    1386868488
+11.72023878663395       Tel     Aviv      9106    1331695519      11212   9534    1386868488
+11.679730019305111      Baton   Rouge     5587    1331695519      6219    10982   1386868488
+11.396162983156035      Figure  Skating   5518    1331695519      11164   8023    1386868488
+11.391231883436134      Lok     Sabha     7429    1331695519      8908    13604   1386868488
+11.169792546284583      Notre   Dame      13516   1331695519      13845   19872   1386868488
+11.127412869936919      Buenos  Aires     20595   1331695519      20908   20919   1386868488
+11.038927639150135      gastropod mollusk 19335   1331695519      22195   20212   1386868488wordsplitter.py
+
+hadoop@ip-10-17-216-123:~$ hfs -cat /user/hadoop/bigram_mutual_info__top10k_s50k.gz/part-r-00000.gz | gunzip | head
+9.752548540247900       Hong    Kong    67506   1331695519      74127   76481   1386868488
+9.100741649871587       Los     Angeles 134207  1331695519      158036  136862  1386868488
+9.04193275319404        Summer  Olympics 50573   1331695519      92912   93036   1386868488
+8.867283927960393       Prime   Minister 64629   1331695519      79612   165235  1386868488
+8.834295951388988       median  income  106184  1331695519      116870  191133  1386868488
+8.697542938085967       Supreme Court   56347   1331695519      72797   186693  1386868488
+8.58353850698748        \       t       110564  1331695519      232890  128335  1386868488
+8.534865092105356       square  mile    57875   1331695519      175459  93613   1386868488
+8.349655012939401       San     Francisco 83370   1331695519      277709  102536  1386868488
+8.314182119206784       Air     Force   92015   1331695519      218205  149230  1386868488
+
+hadoop@ip-10-17-216-123:~$ hfs -cat /user/hadoop/bigram_mutual_info__top10k_s250k.gz/part-r-00000.gz | gunzip | head
+7.226096947140881       United  States  719664  1331695519      1005315 752037  1386868488
+7.125046765096364       align   =       401440  1331695519      404672  1152961 1386868488
+7.004555445216198       New     York    512842  1331695519      1209924 555714  1386868488
+5.8550085688353946      did     not     310806  1331695519      545985  2356006 1386868488
+5.708106314799068       more    than    273197  1331695519      1346085 972904  1386868488
+5.19926746463544        |       align   352579  1331695519      6947135 404672  1386868488
+5.176074269794974       can     be      492695  1331695519      1235963 3253103 1386868488
+5.158784004550341       have    been    497399  1331695519      2157275 1914404 1386868488
+5.051402270277741       has     been    650292  1331695519      3140106 1914404 1386868488
+4.813860313764799       =       ``      638122  1331695519      1152961 6488163 1386868488
+
+so they look sane, 
+todo: some sort of weighting that combines f(mutual_info, support) ( or perhaps log(support)? )
+
+v2, depending on unigram_f, unigram_c, etc
+
+-- bigram_mutual_info.pig
+set default_parallel 60;
+
+-- load up frequencies and counts
+unigram_f = load 'unigram_f' as (t1:chararray, freq:long);
+unigram_c = load 'unigram_c' as (count:long);
+bigram_f = load 'bigram_f' as (t1:chararray, t2:chararray, freq:long);
+bigram_c = load 'bigram_c' as (count:long);
+
+-- only process bigrams with a support of 5000
+bigram_f = filter bigram_f by freq>5000;
+
+-- bigram log likelihood
+-- log2( p(a,b) / ( p(a) * p(b) ) )
+bigram_joined_1 = join bigram_f by t1, unigram_f by t1;
+bigram_joined_2 = join bigram_joined_1 by t2, unigram_f by t1;
+bigram_mi = foreach bigram_joined_2 {
+ t1 = bigram_joined_1::bigram_f::t1;
+ t2 = bigram_joined_1::bigram_f::t2;
+ t1_t2_f = bigram_joined_1::bigram_f::freq;
+ t1_f = bigram_joined_1::unigram_f::freq;
+ t2_f = unigram_f::freq;
+
+ pxy = t1_t2_f / bigram_c.count;
+ px = t1_f / unigram_c.count;
+ py = t2_f / unigram_c.count;
+ mutual_info = LOG(pxy / (px * py)) / LOG(2);
+
+ generate t1, t2, t1_t2_f, mutual_info as mi;
+}
+
+-- sort and store
+sorted = order bigram_mi by mi desc;
+store sorted into 'bigram_mutual_info';
+
+
+### trigram mutual info
+
+mi(x,y,z) = PD(x,y,z) / PI(x,y,z)
+PD(x,y,z) = f(x,y,z) / #trigrams
+PI(x,y,z) = P(x) x P(y) x P(z) + P(x) x P(y,z) + P(x,y) x P(z)
+
+no way to logify this just for ranking... but what are the scales for P(x,y,z)
+
+trigrams = load 'bigrams.gz' as (t1:chararray, t2:chararray, t3:chararray);
+trigram_f = calc_frequencies(trigrams, '(t1,t2,t3)');
+s = order trigram_f by freq desc;
+s = limit s 20;
+dump s;
+trigram_c = calc_count(trigram_f);
+dump trigram_c;
+
+trigram_f
+(of,the,,12184383)
+(in,the,,8042527)
+(,,and,,7223201)
+(,,the,,4756776)
+(to,the,,4077474)
+(is,a,,2913727)
+(and,the,,2740848)
+
+trigram_c 1331695519
+
+so a p(x) x p(y) x p(z) might be as low as
+1/1331695519 * 1/1331695519 * 1/1331695519
+
+which python is happy with at least; 4.2e-28
+
+we know that roughtly unigram_c = bigram_c = trigram_c
+
+mi(x,y,z) = PD(x,y,z) / PI(x,y,z)
+PD(x,y,z) = f(x,y,z) / #trigrams
+PI(x,y,z) = P(x) x P(y) x P(z) + P(x) x P(y,z) + P(x,y) x P(z)
+
+so in the "worse" case (in terms of precision) 
+
+mi = p(x,y,z) / (p(x)*p(y)*p(z) + p(x)*p(y,z) + p(x,y)*p(z))
+= 7.5e-10 / (4.2e-28 + 5.6e-19 + 5.6e19)
+= 7.5e-10 / 1.1277689129009207e-18
+= 665847759.25
+
+so it might be ok, depends on the java rounding...
+
+do in two steps now; 
+
+1) calculate and store uni/bi/tri f and c
+
+-- ngram_freq_and_count.pig
+define calc_frequencies_and_count(A, key, F, C) returns void {
+ grped = group $A by $key;
+ ngram_f = foreach grped generate flatten(group), COUNT($A) as freq;
+ store ngram_f into '$F';
+ grped = group ngram_f all;
+ ngram_c = foreach grped generate SUM(ngram_f.freq) as count; 
+ store ngram_c into '$C';
+}
+unigrams = load 'unigrams_' as (t1:chararray);
+calc_frequencies_and_count(unigrams, t1, unigram_f, unigram_c);
+bigrams = load 'bigrams_' as (t1:chararray, t2:chararray);
+calc_frequencies_and_count(bigrams, '(t1,t2)', bigram_f, bigram_c);
+trigrams = load 'trigrams_' as (t1:chararray, t2:chararray, t3:chararray);
+calc_frequencies_and_count(trigrams, '(t1,t2,t3)', trigram_f, trigram_c);
+
+2) join trigrams with relevant unigrams and bigrams for trigram mutual info
+
+-- support 
+trigram_f = filter trigram_f by freq > 5000;
+
+-- join trigrams to unigrams, and then bigrams
+j1 = join trigram_f by t1, unigram_f by group;
+j1 = foreach j1 generate t1 as t1, t2 as t2, t3 as t3, trigram_f::freq as tri_f, unigram_f::freq as t1_f;
+j2 = join j1 by t2, unigram_f by group;
+j2 = foreach j2 generate t1 as t1, t2 as t2, t3 as t3, tri_f as tri_f, t1_f as t1_f, unigram_f::freq as t2_f;
+j3 = join j2 by t3, unigram_f by group;
+j3 = foreach j3 generate t1 as t1, t2 as t2, t3 as t3, tri_f as tri_f, t1_f as t1_f, t2_f as t2_f, unigram_f::freq as t3_f;
+j4 = join j3 by (t1,t2), bigram_f by (t1,t2);
+j4 = foreach j4 generate j3::t1 as t1, j3::t2 as t2, j3::t3 as t3, tri_f as tri_f, t1_f as t1_f, t2_f as t2_f, t3_f as t3_f, bigram_f::freq as t1_t2_f;
+j5 = join j4 by (t2,t3), bigram_f by (t1,t2);
+j5 = foreach j5 generate j4::t1 as t1, j4::t2 as t2, j4::t3 as t3, tri_f as tri_f, t1_f as t1_f, t2_f as t2_f, t3_f as t3_f, t1_t2_f as t1_t2_f, bigram_f::freq as t2_t3_f;
+
+store j5 into 'j5';
+
+run over full data here's a random 10 from the top 9,900 (those with a trigram support of >5000)
+0       1         2       3       4         5        6        7        8
+t1      t2        t3      tri_f   t1_f      t2_f     t3_f     t1_t2_f  t2_t3_f
+is      believed  that    12661   13485661  129208   6880422  37942    43384
+,       Japan   |         5375    70605655  228878   6947135  47427    6096
+Army    during  the       5588    265521    1113441  74528781 7984     608722
+is      a       very      12667   13485661  24600822 487254   2913727  98812
+''      -LRB-   ``        20776   7106492   10698314 6488163  318052   163930
+when    they    are       6175    1341377   1590308  4063754  68038    178337
+of      the     19th      18155   41340440  74528781 108108   12184383 56948
+national football team    13349   349530    322920   760967   14183    41455
+and     civil   parish    5394    34962970  103766   82877    12421    13064
+a       position  he      6579    24600822  268268   4579270  29515    8242
+
+unigram_c 1386868488
+bigram_c  1331695519
+trigram_c 1276522552
+
+unigram_f 8295593
+bigram_f  99340352
+trigram_f 381541510
+
+todo: the reduction in size of trigram_c compared to bigram_c makes me thing we have a lot of 2 token sentences, there are probably crap.
+      so we probably need a min sentence size; perhaps 3?
+
+can pig precision handle it? quick sanity check and it looks like it! (not surprising i guess, only 3 probs to mulitply not dozens like a naive bayes classifier)
+
+-- trigram_mutual_info.pig
+
+-- load up frequencies and counts
+unigram_f = load 'unigram_f' as (t1:chararray, freq:long);
+unigram_c = load 'unigram_c' as (count:long);
+bigram_f = load 'bigram_f' as (t1:chararray, t2:chararray, freq:long);
+bigram_c = load 'bigram_c' as (count:long);
+trigram_f = load 'trigram_f' as (t1:chararray, t2:chararray, t3:chararray, freq:long);
+trigram_c = load 'trigram_c' as (count:long);
+
+-- only consider trigrams with a support > 1000
+trigram_f = filter trigram_f by freq>1000;
+
+-- join; like a boss (a boss who doesn't know how to write idiomatic pig joins)
+j1 = join trigram_f by t1, unigram_f by t1;
+j1 = foreach j1 generate trigram_f::t1 as t1, t2 as t2, t3 as t3, trigram_f::freq as tri_f, unigram_f::freq as t1_f;
+j2 = join j1 by t2, unigram_f by t1;
+j2 = foreach j2 generate j1::t1 as t1, t2 as t2, t3 as t3, tri_f as tri_f, t1_f as t1_f, unigram_f::freq as t2_f;
+j3 = join j2 by t3, unigram_f by t1;
+j3 = foreach j3 generate j2::t1 as t1, t2 as t2, t3 as t3, tri_f as tri_f, t1_f as t1_f, t2_f as t2_f, unigram_f::freq as t3_f;
+j4 = join j3 by (t1,t2), bigram_f by (t1,t2);
+j4 = foreach j4 generate j3::t1 as t1, j3::t2 as t2, j3::t3 as t3, tri_f as tri_f, t1_f as t1_f, t2_f as t2_f, t3_f as t3_f, bigram_f::freq as t1_t2_f;
+j5 = join j4 by (t2,t3), bigram_f by (t1,t2);
+j5 = foreach j5 generate j4::t1 as t1, j4::t2 as t2, j4::t3 as t3, tri_f as tri_f, t1_f as t1_f, t2_f as t2_f, t3_f as t3_f, t1_t2_f as t1_t2_f, bigram_f::freq as t2_t3_f;
+
+-- mi = log2( p(x,y,z) / (p(x)*p(y)*p(z) + p(x)*p(y,z) + p(x,y)*p(z)) )
+mutual_info = foreach j5 {
+ px = (double)t1_f / unigram_c.count;
+ py = (double)t2_f / unigram_c.count;
+ pz = (double)t3_f / unigram_c.count;
+ pxy = (double)t1_t2_f / bigram_c.count;
+ pyz = (double)t2_t3_f / bigram_c.count;
+
+ dep_pxyz = (double)tri_f / trigram_c.count;
+
+ px_py_pz = px * py * pz;
+ px_pyz   = px * pyz;
+ pxy_pz   = pxy * pz;
+ indep_pxyz = px_py_pz + px_pyz + pxy_pz;
+ 
+ mi = LOG(dep_pxyz / indep_pxyz) / LOG(2);
+ 
+ generate t1,t2,t3, tri_f, mi as mi;
+}
+positive_mutual_info = filter mutual_info by mi>0;
+sorted = order positive_mutual_info by mi desc;
+store sorted into 'trigram_mutual_info';
+
+72117 records
+
+-- top_ngrams_by_freq.pig
+n = load 'unigram_f' as (t1:chararray, freq:long);
+s = order n by freq desc;
+s = limit s by 10;
+store s into 'unigram_top10';
+n = load 'bigram_f' as (t1:chararray, t2:chararray, freq:long);
+s = order n by freq desc;
+s = limit s by 10;
+store s into 'bigram_top10';
+n = load 'trigram_f' as (t1:chararray, t2:chararray, t3:chararray, freq:long);
+s = order n by freq desc;
+s = limit s by 10;
+store s into 'trigram_top10';
+
+pig -f bigram_mutual_info.pig
+pig -f trigram_mutual_info.pig
+
+hfs -cat bigram_mutual_info/* | ./reparse_ngram_mi.py > bigram_mutual_info.tsv
+hfs -cat trigram_mutual_info/* | ./reparse_ngram_mi.py > trigram_mutual_info.tsv
+
+ b = read.delim('bigram_mutual_info.tsv', sep="\t", header=F)
+ ggplot(b, aes(log10(V2),V3)) + geom_point(alpha=1/5) + xlab('log bigram freq') + ylab('mutual info') + opts(title="bigram mutual info")
+ t = read.delim('trigram_mutual_info.tsv', sep="\t", header=F)
+ t = t[t$V2>750,]
+ ggplot(t, aes(log10(V2),V3)) + geom_point(alpha=1/5) + xlab('log trigram freq') + ylab('mutual info') + opts(title="trigram mutual info")
+
+
+
+------------------------------
+writeup
+
+## method
+
+### tokenisation
+
+* grab a freebase wikipedia dump; 5,700,000 articles
+* clean it up a bit (eg remove strap markup the freebase guys left in, remove "words" over 100 characters (again parser errors), replace urls with 'URL', etc) (see the readme)
+* feed it through the stanford parser to extract tokens, split by sentence; 55,000,000 sentences
+
+### extract ngrams
+
+run a simple streaming job using python to extract uni/bi/trigrams (see <a>README</a>)
+
+for the MLEs we need frequency of ngrams and overall counts which i calculated with <a>ngram_freq_and_count.pig</a>
+
+         total   num distinct 
+unigram  
+bigram
+trigram
+
+unigram_c 1,386,868,488
+bigram_c  1,331,695,519
+trigram_c 1,276,522,552
+
+unigram_f 8,295,593
+bigram_f  99,340,352
+trigram_f 381,541,510
+
+unigram_top10
+the     74528781
+,       70605655
+.       54902186
+of      41340440
+and     34962970
+
+bigram_top10
+of      the     12184383
+in      the     8042527
+,       and     7223201
+,       the     4756776
+to      the     4077474
+
+trigram_top10
+|       |       |       805094
+,       and     the     767814
+one     of      the     617374
+-RRB-   is      a       562709
+|       -       |       516652
+
+some notes:
+* -RRB- is right bracket.
+* the stanford parser extracts ',' & '.' & '|' as tokens; at first i was tempted to take them out, but might just leave them in and see if the numbers can just sort them out...
+
+## mutual information
+
+## bigrams
+
+once we've run <a>ngram_freq_and_count.pig</a> we can run <a>bigram_mutual_info.pig</a> to calculate bigram mutual information  
+
+1          Burkina Faso  5417 17.88616
+2       Rotten Tomatoes  5695 17.50873
+3          Kuala Lumpur  6441 17.47578
+4              Tel Aviv  9106 16.90873
+5           Baton Rouge  5587 16.85029
+6        Figure Skating  5518 16.44119
+7             Lok Sabha  7429 16.43407
+8            Notre Dame 13516 16.11460
+9          Buenos Aires 20595 16.05346
+10    gastropod mollusk 19335 15.92581
+11           Costa Rica 11014 15.85664
+12         Barack Obama  9742 15.84432
+13           vice versa  5205 15.66973
+14              hip hop 15727 15.63575
+15        Uttar Pradesh  7833 15.63525
+16   main-belt asteroid 10551 15.62005
+17 Theological Seminary  6131 15.61613
+18         Saudi Arabia 14887 15.59454
+19                sq mi  8492 15.58054
+20            São Paulo 13832 15.53181
+
+a plot of mutual info vs bigram frequency shows a huge density of low frequency, low mutual info bigrams.
+
+the high frequency, low mutual info points in the bottom right correspond to language constructs such as "of the", "to the" or ", and"
+
+## trigrams
+
+running <a>trigram_mutual_info.pig</a> gives us trigram mutual information; in general they are pretty good..
+
+ 51              Abdu ` l-Bahá 1011 19.06866
+476  Dravida Munnetra Kazhagam 1043 18.98674
+602            Ab urbe condita 1059 18.58179
+824              Dar es Salaam 1130 18.09764
+875            Kitts and Nevis 1095 18.02320
+903           Procter & Gamble 1255 17.96789
+929        Antigua and Barbuda 1290 17.90375
+964        agnostic or atheist 1068 17.84620
+995              Vasco da Gama 1401 17.77709
+997               Ku Klux Klan 1944 17.77443
+1150            Ways and Means 1070 17.51264
+1172           Croix de Guerre 1196 17.46765
+1176      Jehovah 's Witnesses 2235 17.46177
+1301                SV = Saves 1980 17.24957
+1310             Venue | Crowd 1518 17.24024
+1324           summa cum laude 1363 17.22880
+1373      Teenage Mutant Ninja 1003 17.17236
+1382           Osama bin Laden 1734 17.16104
+1396           magna cum laude 1566 17.13729
+1545       Names -LRB- US-ACAN 2813 16.91815
+
+so oddities like SV = Saves (there are other similar ones; "Pts = Points", "SO = Strikeouts" ) must be from some type of sports glossary
+
+but mostly they are noun phrases 
+
+the non capitilised ones are interesting... the top ten being
+
+8 agnostic or atheist 
+16 summa cum laude 
+19 magna cum laude
+33 unmarried opposite-sex partnerships 
+35 flora and fauna 
+42 non-institutionalized group quarters 
+56 mollusk or micromollusk
+67 italics indicate fastest
+73 air-breathing land snail
+
+air-breathing land snail #ftw
+
+
