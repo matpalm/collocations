@@ -1,4 +1,6 @@
-see <a href="http://matpalm.com/blog/2011/10/22/collocations">my blog post</a> for more info
+see <a href="http://matpalm.com/blog/2011/10/22/collocations_1">my blog post</a> for more info
+
+## preprocess
 
 ### stanford parser
 
@@ -33,7 +35,9 @@ see <a href="http://matpalm.com/blog/2011/10/22/collocations">my blog post</a> f
 note! seems to be the same sentences repeated 2-3 times (???)
 wrote a pig job to get rid of them...
 
-### extract ngrams
+## extract ngrams
+
+### extract 
 
     hadoop jar ~/contrib/streaming/hadoop-streaming.jar \
      -input sentences_sans_url_long_words -output unigrams.gz \
@@ -209,7 +213,7 @@ part of the       413992
 -RRB- , and       290050
 </pre>
 
-### bigram mutual info
+## bigram mutual info
 
 <pre>
 -- bigram_mutual_info.pig
@@ -307,7 +311,7 @@ hadoop@ip-10-17-216-123:~$ hfs -cat /user/hadoop/bigram_mutual_info__top10k_s250
 
 </pre>
 
-### trigram mutual info
+## trigram mutual info
 
 <pre>
 -- trigram_mutual_info.pig
@@ -391,52 +395,58 @@ Vasco			da		Gama	1401	224613.90052744994
 Ku			Klux		Klan	1944	224200.36813564494
 </pre>
 
-### graphs
+## graphs
 
-pig -f bigram_mutual_info.pig
-pig -f trigram_mutual_info.pig
+<pre>
 
-hfs -cat bigram_mutual_info/* | ./reparse_ngram_mi.py > bigram_mutual_info.tsv
-hfs -cat trigram_mutual_info/* | ./reparse_ngram_mi.py > trigram_mutual_info.tsv
+sh>
+ hfs -cat bigram_mutual_info/* | ./reparse_ngram_mi.py > bigram_mutual_info.tsv
+ hfs -cat trigram_mutual_info/* | ./reparse_ngram_mi.py > trigram_mutual_info.tsv
 
+R>
  b = read.delim('bigram_mutual_info.tsv', sep="\t", header=F)
  ggplot(b, aes(log10(V2),V3)) + geom_point(alpha=1/5) + xlab('log bigram freq') + ylab('mutual info') + opts(title="bigram mutual info")
  t = read.delim('trigram_mutual_info.tsv', sep="\t", header=F)
  t = t[t$V2>750,]
  ggplot(t, aes(log10(V2),V3)) + geom_point(alpha=1/5) + xlab('log trigram freq') + ylab('mutual info') + opts(title="trigram mutual info")
+</pre>
 
-# bigrams at a distance
+## pareto front
 
-first filter out bracket tokens (-LRB- and -RRB-) and any word that doesnt have at least\
- one letter
+<pre>
+hfs -cat /user/hadoop/trigram_mutual_info/* | ./reparse_ngram_mi.py > trigram_mutual_info.tsv
+cat trigram_mutual_info.tsv | ./pareto.py > trigram_mutual_info.pareto.tsv
+</pre>
 
+## bigrams at a distance
+
+first filter out bracket tokens (-LRB- and -RRB-) and any word that doesnt have at least one letter
+
+<pre>
 hadoop jar ~/contrib/streaming/hadoop-streaming.jar \
  -input sentences_sans_url_long_words -output sentences_single_char_filtered \
  -mapper filter_single_non_char.py -file filter_single_non_char.py \
  -numReduceTasks 0
+</pre>
 
-in  55,172,969
-out 55,172,969
+rebuild unigrams & bigrams
 
-hadoop jar ~/contrib/streaming/hadoop-streaming.jar \
- -input sentences_single_char_filtered -output bigrams_d \
- -mapper bigrams_at_a_distance.py -file bigrams_at_a_distance.py \
- -numReduceTasks 0
-
-in     55,172,969
-out 3,154,200,111
-
-and since we've changed the unigrams (from the filter_single_non_char.py) we need to regen them too...
-
+<pre>
 hadoop jar ~/contrib/streaming/hadoop-streaming.jar \
  -input sentences_single_char_filtered -output unigrams_d \
  -mapper "ngrams.py 1" -file ngrams.py \
  -numReduceTasks 0
+hadoop jar ~/contrib/streaming/hadoop-streaming.jar \
+ -input sentences_single_char_filtered -output bigrams_d \
+ -mapper bigrams_at_a_distance.py -file bigrams_at_a_distance.py \
+ -numReduceTasks 0
+</pre>
 
-( previous bigram count == 1,331,695,519 so looks about right (x3) )
+from 55,172,969 sentences to 3,154,200,111 bigrams
 
-calc _f and _c for unigrams_ and bigrams_d
+re calc _f and _c for unigrams_ and bigrams_d
 
+<pre>
 -- ngram_d_freq_and_count.pig
 define calc_frequencies_and_count(A, key, F, C) returns void {
  grped = group $A by $key;
@@ -450,7 +460,11 @@ unigrams = load 'unigrams_d' as (t1:chararray);
 calc_frequencies_and_count(unigrams, t1, unigram_d_f, unigram_d_c);
 bigrams = load 'bigrams_d' as (t1:chararray, t2:chararray);
 calc_frequencies_and_count(bigrams, '(t1,t2)', bigram_d_f, bigram_d_c);
+</pre>
 
+result
+
+<pre>
 unigram_d_f (dus) 95,097,917
 unigram_d_c = 1,161,564,928
 bigram_d_f (dus) 5,876,653,769
@@ -475,29 +489,22 @@ Lok     Sabha   7435    14.679706153380339
 background-color        E9E9E9  8490    14.652837972898762
 Haleakala       NEAT    5328    14.514309090636834
 Kitt    Spacewatch      17854   14.435471379604573
+</pre>
 
-interesting...
-- lots of noise from the parsing; eg (expr, expr) or (background-color, E9E9E9)
-- picks up what would otherwise be a trigram, but seperated with a &; eg (Dungeons, Dragons) or (Trinidad, Tobago) which would otherwise be picked up as the trigrams "Dungeons & Dragons" and "Trinidad & Tobago") would be interesting to match these up to the trigrams, might come back to it...
+## mean / stddev
 
-# mean / stddev
+build token distances
 
-"the cat sat"
-the     cat     1
-cat     the     -1
-the     sat     2
-sat     the     -2
-cat     sat     1
-sat     cat     -1
-
+<pre>
 hadoop jar ~/contrib/streaming/hadoop-streaming.jar \
  -input sentences_single_char_filtered -output token_distance \
  -mapper token_distance.py -file token_distance.py \
  -numReduceTasks 0
+</pre>
 
-in      55,172,969 sentences
-out 40,304,982,684 token pairs (629gb)
+calc mean/sd of all pairs
 
+<pre>
 -- mean_sd.pig
 -- see http://en.wikipedia.org/wiki/Standard_deviation#Rapid_calculation_methods
 td = load 'token_distance' as (t1:chararray, t2:chararray, distance:int);
@@ -519,47 +526,7 @@ mean_sd = foreach grped {
 }
 
 store mean_sd into 'token_distance_mean_sd';
-
-original
- unigram_f 107mb
- bigram_f  2gb
-
-at-a-distnace
- unigram_d_f 95mb  # recall: smaller than unigram_f since |s etc removed
- bigram_d_f  6gb
-
-token distances pairs
- token_distances 630gb
-
-map() completion: 1.0
-reduce() completion: 1.0
-Counters: 21
-	Job Counters 
-		Launched reduce tasks=630
-		Rack-local map tasks=1357
-		Launched map tasks=4734
-		Data-local map tasks=3377
-	org.apache.pig.PigCounters
-		PROACTIVE_SPILL_COUNT_RECS=10746261
-		PROACTIVE_SPILL_COUNT_BAGS=81
-	org.apache.pig.PigWarning
-		DIVIDE_BY_ZERO=1472360
-	FileSystemCounters
-		FILE_BYTES_READ=3251878302839
-		HDFS_BYTES_READ=629989368432
-		FILE_BYTES_WRITTEN=657964206763
-		HDFS_BYTES_WRITTEN=81358795693
-	Map-Reduce Framework
-		Reduce input groups=2445597082
-		Combine output records=36016870334
-		Map input records=40304982684
-		Reduce shuffle bytes=239728499265
-		Reduce output records=2445597082
-		Spilled Records=36810125322
-		Map output bytes=4964020121834
-		Combine input records=71775930475
-		Map output records=40304982684
-		Reduce input records=4545922543
+</pre>
 
 crazy long sentences?
 
