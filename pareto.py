@@ -4,15 +4,19 @@ import sys
 x = {}
 y = {}
 keys = []
+original_rank = {}
+rank = 1
 for line in sys.stdin:
     c,px,py = line.strip().split("\t")
     x[c] = float(px)
     y[c] = float(py)
     keys.append(c)
+    original_rank[c] = rank
+    rank+=1
 num_in_front = {}
 
-max_allowed_in_front = int(len(keys) * 0.005)
-sys.stderr.write("max_allowed_in_front "+str(max_allowed_in_front)+"\n")
+max_allowed_in_front = 1#nint(len(keys) * 0.005)
+#sys.stderr.write("max_allowed_in_front "+str(max_allowed_in_front)+"\n")
 
 def on_front(p1):
     num_in_front_of_p1 = 0
@@ -36,5 +40,5 @@ for p1 in keys:
         pareto.append(p1)
 
 for k in pareto:
-    print "\t".join(map(str,[k, x[k], y[k], num_in_front[k]]))
+    print "\t".join(map(str,[original_rank[k], k, x[k], y[k], num_in_front[k]]))
 
