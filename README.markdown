@@ -39,18 +39,18 @@ wrote a pig job to get rid of them...
 
 ### extract 
 
-    hadoop jar ~/contrib/streaming/hadoop-streaming.jar \
-     -input sentences_sans_url_long_words -output unigrams \
-     -mapper "ngrams.py 1" -file ngrams.py \
-     -numReduceTasks 0
-    hadoop jar ~/contrib/streaming/hadoop-streaming.jar \
-     -input sentences_sans_url_long_words -output bigrams \
-     -mapper "ngrams.py 2" -file ngrams.py \
-     -numReduceTasks 0
-    hadoop jar ~/contrib/streaming/hadoop-streaming.jar \
-     -input sentences_sans_url_long_words -output trigrams \
-     -mapper "ngrams.py 3" -file ngrams.py \
-     -numReduceTasks 0
+<pre>
+ -- extract_ngrams.pig
+define ngrams(s, n, out) returns void {
+ define ngrams `python ngrams.py $n` ship('ngrams.py');
+ ngrams = stream $s through ngrams;
+ store ngrams into '$out';
+}
+sentences = load 'sentences' as (sentence:chararray);
+ngrams(sentences, 1, 'unigrams');
+ngrams(sentences, 2, 'bigrams');
+ngrams(sentences, 3, 'trigrams');
+</pre>
 
 ### sanity check frequency of unigram lengths..
 
@@ -530,6 +530,7 @@ store mean_sd into 'token_distance_mean_sd';
 
 crazy long sentences?
 
+<pre>
  -- sentence_len_freq.pig
  s = load 'sentences_single_char_filtered' as (sentence:chararray);
  define num_tokens `python num_tokens.py` cache('num_tokens.py');
@@ -538,6 +539,7 @@ crazy long sentences?
  len_freq = foreach grped generate group as len, COUNT(sentence_lens) as len_freq;
  o = order len_freq by len;
  store o into 'sentence_len_freq';
+</pre>
 
 heaps of sentences with >200 tokens
 ...
@@ -563,6 +565,12 @@ as expected its noisy parsing
 limit to 9 words away...
 
 rerun..
+
+todo:
+- mean_sd analysis
+- pos tagging and mi on AN and ANN phrases
+- pareto front analysis
+- likelihood ratios
 
 # embedded pig notes
 
