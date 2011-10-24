@@ -18,11 +18,11 @@ see <a href="http://matpalm.com/blog/2011/10/22/collocations_1">my blog post</a>
 
 ### extract sentences
 
-    java -classpath ~/stanford-parser-2011-09-14/stanford-parser.jar edu.stanford.nlp.process.DocumentPreprocessor articles > sentences
+    java -classpath /mnt/stanford-parser-2011-09-14/stanford-parser.jar edu.stanford.nlp.process.DocumentPreprocessor articles > sentences
 
 ### move to hdfs
 
-    hadoop -fs mkdir sentences
+    hadoop fs -mkdir sentences
     hadoop fs -copyFromLocal sentences sentences/sentences
 
 ### filter out long terms and urls
@@ -40,15 +40,15 @@ wrote a pig job to get rid of them...
 ### extract 
 
     hadoop jar ~/contrib/streaming/hadoop-streaming.jar \
-     -input sentences_sans_url_long_words -output unigrams.gz \
+     -input sentences_sans_url_long_words -output unigrams \
      -mapper "ngrams.py 1" -file ngrams.py \
      -numReduceTasks 0
     hadoop jar ~/contrib/streaming/hadoop-streaming.jar \
-     -input sentences_sans_url_long_words -output bigrams.gz \
+     -input sentences_sans_url_long_words -output bigrams \
      -mapper "ngrams.py 2" -file ngrams.py \
      -numReduceTasks 0
     hadoop jar ~/contrib/streaming/hadoop-streaming.jar \
-     -input sentences_sans_url_long_words -output trigrams.gz \
+     -input sentences_sans_url_long_words -output trigrams \
      -mapper "ngrams.py 3" -file ngrams.py \
      -numReduceTasks 0
 
@@ -59,7 +59,7 @@ wrote a pig job to get rid of them...
    set default_parallel 24;
    register 'pig/piggybank.jar';
    define len org.apache.pig.piggybank.evaluation.string.LENGTH;
-   unigrams = load 'unigrams.gz' as (t1:chararray);
+   unigrams = load 'unigrams' as (t1:chararray);
    lengths = foreach unigrams generate len(t1) as length;
    grped = group lengths by length;
    freqs = foreach grped generate group as length, COUNT(lengths) as freq;
@@ -120,9 +120,9 @@ define quantiles(A, key, out) returns void {
  }
  store quantiles into '$out';
 }
-unigrams = load 'unigrams.gz' as (t1:chararray);
+unigrams = load 'unigrams' as (t1:chararray);
 quantiles(unigrams, t1, unigrams_quantiles);
-bigrams = load 'bigrams.gz' as (t1:chararray, t2:chararray);
+bigrams = load 'bigrams' as (t1:chararray, t2:chararray);
 quantiles(bigrams, '(t1,t2)', bigrams_quantiles);
 </pre>
 
@@ -147,11 +147,11 @@ define calc_frequencies_and_count(A, key, F, C) returns void {
  ngram_c = foreach grped generate SUM(ngram_f.freq) as count; 
  store ngram_c into '$C';
 }
-unigrams = load 'unigrams_' as (t1:chararray);
+unigrams = load 'unigrams' as (t1:chararray);
 calc_frequencies_and_count(unigrams, t1, unigram_f, unigram_c);
-bigrams = load 'bigrams_' as (t1:chararray, t2:chararray);
+bigrams = load 'bigrams' as (t1:chararray, t2:chararray);
 calc_frequencies_and_count(bigrams, '(t1,t2)', bigram_f, bigram_c);
-trigrams = load 'trigrams_' as (t1:chararray, t2:chararray, t3:chararray);
+trigrams = load 'trigrams' as (t1:chararray, t2:chararray, t3:chararray);
 calc_frequencies_and_count(trigrams, '(t1,t2,t3)', trigram_f, trigram_c)
 </pre>
 
