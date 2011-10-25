@@ -27,13 +27,24 @@ see <a href="http://matpalm.com/blog/2011/10/22/collocations_1">my blog post</a>
 
 ### filter out long terms and urls
 
-    hadoop jar ~/contrib/streaming/hadoop-streaming.jar \
-     -input sentences -output sentences_sans_url_long_words \
-     -mapper cut_huge_words.py -file cut_huge_words.py \
-     -numReduceTasks 0
+<pre>
+hadoop jar ~/contrib/streaming/hadoop-streaming.jar \
+ -input sentences -output sentences_sans_url_long_words \
+ -mapper cut_huge_words.py -file cut_huge_words.py \
+ -numReduceTasks 0
+hadoop fs -rmr sentences
+hadoop fs -mv sentences_sans_url_long_words sentences
+</pre>
 
 note! seems to be the same sentences repeated 2-3 times (???)
 wrote a pig job to get rid of them...
+
+<pre>
+ -- distinct_sentences.pig
+ s = load 'sentences';
+ d = distinct s;
+ store d into 'sentences.distinct';
+</pre>
 
 ## extract ngrams
 
@@ -496,18 +507,21 @@ Kitt    Spacewatch      17854   14.435471379604573
 build token distances
 
 <pre>
+hadoop fs -mkdir token_distance
 hadoop jar ~/contrib/streaming/hadoop-streaming.jar \
- -input sentences_single_char_filtered -output token_distance \
+ -input sentences -output token_distance/bigram_distance \
  -mapper token_distance.py -file token_distance.py \
  -numReduceTasks 0
 </pre>
+
+55,378,018 sentences -> 20,089,376,334 pairs
 
 calc mean/sd of all pairs
 
 <pre>
 -- mean_sd.pig
 -- see http://en.wikipedia.org/wiki/Standard_deviation#Rapid_calculation_methods
-td = load 'token_distance' as (t1:chararray, t2:chararray, distance:int);
+td = load 'token_distance/bigram_distance' as (t1:chararray, t2:chararray, distance:int);
 tds = foreach td generate t1, t2, distance, distance*distance as distance_sqr;
 grped = group tds by (t1,t2);
 
@@ -525,46 +539,32 @@ mean_sd = foreach grped {
  generate flatten(group), n, mean, sd;
 }
 
-store mean_sd into 'token_distance_mean_sd';
+store mean_sd into 'token_distance/mean_sd';
 </pre>
 
-crazy long sentences?
+calculate quantiles of mean / sd values (sanity)
 
 <pre>
- -- sentence_len_freq.pig
- s = load 'sentences_single_char_filtered' as (sentence:chararray);
- define num_tokens `python num_tokens.py` cache('num_tokens.py');
- sentence_lens = stream s through num_tokens as (len:int);
- grped = group sentence_lens by len;
- len_freq = foreach grped generate group as len, COUNT(sentence_lens) as len_freq;
- o = order len_freq by len;
- store o into 'sentence_len_freq';
+-- mean_sd_quantiles.pig 
+register /mnt/datafu/dist/datafu-0.0.1.jar
+define Quantile datafu.pig.stats.StreamingQuantile('101');
+define calc_quantiles(src, field, out) returns void {
+ just_field = foreach $src generate $field;
+ grped = group just_field all;
+ quantiles = foreach grped generate Quantile(just_field);
+ store quantiles into '$out';
+}
+mean_sd = load 'token_distance/mean_sd' as (t1:chararray, t2:chararray, n:int, mean:double, stddev:double);
+calc_quantiles(mean_sd, mean, 'token_distance/mean_quantiles');
+calc_quantiles(mean_sd, stddev, 'token_distance/stddev_quantiles');
 </pre>
 
-heaps of sentences with >200 tokens
-...
-9949  1
-10647 1
-12210 1
-14108 1
-14152 1
-16080 1
-17752 1
-20225 1
+hadoop@ip-10-17-57-166:~$ hfs -cat /user/hadoop/token_distance/mean_quantiles/*
+(-9.0,-8.0,-7.5,-7.0,-6.5,-6.0,-6.0,-5.5,-5.375,-5.0,-5.0,-4.5,-4.4,-4.0,-4.0,-3.75,-3.5,-3.4,-3.1683168316831685,-3.0,-3.0,-2.7777777777777777,-2.607142857142857,-2.5,-2.4,-2.25,-2.0,-2.0,-2.0,-1.875,-1.6944444444444444,-1.6,-1.5,-1.5,-1.3333333333333333,-1.2352941176470589,-1.0588235294117647,-1.0,-1.0,-1.0,-0.8888888888888888,-0.75,-0.6666666666666666,-0.5157894736842106,-0.5,-0.5,-0.34782608695652173,-0.2702702702702703,-0.16666666666666666,0.0,0.0,0.0,0.02502691065662002,0.2,0.3076923076923077,0.4,0.5,0.5,0.5680933852140078,0.6666666666666666,0.7777777777777778,0.9354838709677419,1.0,1.0,1.0,1.1111111111111112,1.25,1.3333333333333333,1.5,1.5,1.625,1.75,1.9714285714285715,2.0,2.0,2.1,2.3214285714285716,2.48,2.5,2.6666666666666665,2.8620689655172415,3.0,3.0,3.25,3.5,3.5238095238095237,3.8333333333333335,4.0,4.142857142857143,4.5,4.666666666666667,5.0,5.0,5.5,5.666666666666667,6.0,6.333333333333333,6.666666666666667,7.0,7.666666666666667,9.0)
 
-wtf?
+hadoop@ip-10-17-57-166:~$ hfs -cat /user/hadoop/token_distance/stddev_quantiles/*
+(0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.5,0.6030226891555273,0.7071067811865476,0.7071067811865476,0.7071067811865476,0.7071067811865476,1.1547005383792515,1.4142135623730951,1.4142135623730951,1.4142135623730951,1.4142135623730951,1.6278820596099706,1.8085096269323728,2.073644135332772,2.1213203435596424,2.1213203435596424,2.1213203435596424,2.23606797749979,2.4257748058625186,2.6076809620810595,2.819996622760558,2.8284271247461903,2.8284271247461903,2.886751345948129,3.03315017762062,3.2145502536643185,3.420526275297414,3.519648784380674,3.5355339059327378,3.5355339059327378,3.669695718539436,3.8172540616821107,4.0,4.08248290463863,4.203173404306164,4.242640687119285,4.242640687119285,4.343246179462463,4.444097208657794,4.541892543729748,4.618802153517006,4.715628712080461,4.793585457511062,4.88535225614967,4.949747468305833,4.949747468305833,4.979959839195493,5.036533199202271,5.118869382571086,5.18613073726338,5.237229365663817,5.297106327329854,5.366563145999495,5.440588203494177,5.504543577809154,5.5506327395643655,5.609515724790034,5.656854249492381,5.656854249492381,5.7016464227295405,5.770615218501403,5.830951894845301,5.894913061275798,5.9717615272398445,6.0332412515993425,6.09831551536455,6.18465843842649,6.25642526870234,6.3508529610858835,6.363961030678928,6.3979848801256,6.494261974735176,6.597558470963162,6.685805860178712,6.8452277432633934,6.990072325170257,7.0710678118654755,7.0710678118654755,7.211102550927978,7.41057802513857,7.637626158259733,7.7781745930520225,7.788880963698615,8.144527815247077,8.48528137423857,8.48528137423857,9.192388155425117,9.192388155425117,9.899494936611665,10.606601717798213,12.727922061357855)
 
- -- filter_long_sentences.pig
- s = load 'sentences_single_char_filtered' as (sentence:chararray);
- define filter_long_sentences `python filter_long_sentences.py` ship('filter_long_sentences.py');
- long_sentences = stream s through filter_long_sentences;
- store long_sentences into 'long_sentences';
-
-as expected its noisy parsing
-
-limit to 9 words away...
-
-rerun..
 
 todo:
 - mean_sd analysis

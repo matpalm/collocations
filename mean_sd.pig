@@ -1,6 +1,6 @@
 -- mean_sd.pig
 -- see http://en.wikipedia.org/wiki/Standard_deviation#Rapid_calculation_methods
-td = load 'token_distance' as (t1:chararray, t2:chararray, distance:int);
+td = load 'token_distance/bigram_distance' as (t1:chararray, t2:chararray, distance:int);
 tds = foreach td generate t1, t2, distance, distance*distance as distance_sqr;
 grped = group tds by (t1,t2);
 mean_sd = foreach grped {
@@ -17,5 +17,5 @@ mean_sd = foreach mean_sd {
  sd = SQRT( sd_nomin / sd_denom );
  generate flatten(group), n, mean, sd;
 }
-store mean_sd into 'token_distance_mean_sd';
+store mean_sd into 'token_distance/mean_sd';
 
