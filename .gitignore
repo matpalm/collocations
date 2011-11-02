@@ -1,2 +1,13 @@
+pig*log
 journal
 .RData
+bigram_c
+bigram_f
+unigram_c
+unigram_f
+trigram_c
+trigram_f
+trigrams
+bigrams
+unigrams
+sentences
