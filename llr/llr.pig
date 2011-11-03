@@ -9,22 +9,24 @@ bigram_c = load 'bigram_c' as (count:long);
 bigram_joined_1 = join bigram_f by t1, unigram_f by t1;
 bigram_joined_2 = join bigram_joined_1 by t2, unigram_f by t1;
 freqs = foreach bigram_joined_2 {
- t1 = bigram_joined_1::bigram_f::t1;
- t2 = bigram_joined_1::bigram_f::t2;
- t1_t2_f = bigram_joined_1::bigram_f::freq;
- t1_f = bigram_joined_1::unigram_f::freq;
- t2_f = unigram_f::freq;
- generate t1 as t1, t2 as t2, t1_t2_f as t1_t2_f, t1_f as t1_f, t2_f as t2_f, bigram_c.count as total_num_bigrams;
+ generate
+  bigram_joined_1::bigram_f::t1 as t1,
+  bigram_joined_1::bigram_f::t2 as t2,
+  bigram_joined_1::bigram_f::freq as t1_t2_f,
+  bigram_joined_1::unigram_f::freq as t1_f,
+  unigram_f::freq as t2_f;
 }
 store freqs into 'freqs';
 
 -- convert freqs to k_values
 k_values = foreach freqs {
-  generate t1 as t1, t2 as t2,
+  generate 
+   t1 as t1, 
+   t2 as t2,
    t1_t2_f as k11, 
    t1_f - t1_t2_f as k12, 
    t2_f - t1_t2_f as k21, 
-   total_num_bigrams - (t1_f + t2_f - t1_t2_f) as k22;
+   bigram_c.count - (t1_f + t2_f - t1_t2_f) as k22;
 }
 store k_values into 'k_values';
 
