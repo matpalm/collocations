@@ -16,7 +16,7 @@ freqs = foreach bigram_joined_2 {
   bigram_joined_1::unigram_f::freq as t1_f,
   unigram_f::freq as t2_f;
 }
-store freqs into 'freqs';
+--store freqs into 'freqs';
 
 -- convert freqs to k_values
 k_values = foreach freqs {
@@ -28,7 +28,7 @@ k_values = foreach freqs {
    t2_f - t1_t2_f as k21, 
    bigram_c.count - (t1_f + t2_f - t1_t2_f) as k22;
 }
-store k_values into 'k_values';
+--store k_values into 'k_values';
 
 -- calculate log likelihood from k_values
 register 'lib/mahout-math-0.6-SNAPSHOT.jar';
