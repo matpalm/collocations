@@ -25,16 +25,15 @@ see <a href="http://matpalm.com/blog/2011/10/22/collocations_1">my blog post</a>
     hadoop fs -mkdir sentences
     hadoop fs -copyFromLocal sentences sentences/sentences
 
-### filter out long terms and urls
+### filter out long "terms", urls and terms without at least one alpha numeric
 
-<pre>
-hadoop jar ~/contrib/streaming/hadoop-streaming.jar \
- -input sentences -output sentences_sans_url_long_words \
- -mapper cut_huge_words.py -file cut_huge_words.py \
- -numReduceTasks 0
-hadoop fs -rmr sentences
-hadoop fs -mv sentences_sans_url_long_words sentences
-</pre>
+    -- clean_sentences.pig
+    s = load 'sentences' as (s:chararray);
+    define chw `python cut_huge_words.py` ship('cut_huge_words.py');
+    s = stream s through chw;
+    define fsnc `python filter_single_non_char.py` ship('filter_single_non_char.py');
+    s = stream s through fsnc;
+    store s into 'sentences.filtered'
 
 note! seems to be the same sentences repeated 2-3 times (???)
 wrote a pig job to get rid of them...

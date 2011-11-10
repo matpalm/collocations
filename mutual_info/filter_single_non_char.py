@@ -6,14 +6,14 @@
 
 import sys
 
-def a_letter(t): 
-    return t.lower() >= 'a' and t.lower() <= 'z'
+def alpha_numeric(t): 
+    return t.isdigit() or (t.lower() >= 'a' and t.lower() <= 'z')
 
 def keep(t):
     if t == '-RRB-' or t=='-LRB-': 
         return False
     for c in t:
-        if a_letter(c):
+        if alpha_numeric(c):
             return True
     return False
 
