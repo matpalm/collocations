@@ -3,9 +3,6 @@ import sys
 from math import *
 from collections import *
 
-MIN_BIGRAM_SUPPORT = 3
-MIN_UNIGRAM_SUPPORT = 8
-
 unigram_count = 0
 bigram_count = 0
 unigram_freq = defaultdict(int)
@@ -43,8 +40,6 @@ for bigram in bigram_freq:
     t1, t2 = bigram
     t1_f = unigram_freq[t1]
     t2_f = unigram_freq[t2]
-#    if t1_f < MIN_UNIGRAM_SUPPORT or t2_f < MIN_UNIGRAM_SUPPORT:
-#        continue
 
     # ll_bigram = log(bigram_f) - log(bigram_count)
     # ll_t1 = log(t1_f) - log(unigram_count)
