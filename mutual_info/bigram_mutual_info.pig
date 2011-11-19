@@ -24,7 +24,7 @@ mutual_info = foreach bigram_joined_2 {
  pxy = (double)t1_t2_f / bigram_c.count;
  px = (double)t1_f / unigram_c.count;
  py = (double)t2_f / unigram_c.count;
- mutual_info = LOG(pxy / (px * py)) / LOG(2);
+ mutual_info = pxy * LOG(pxy / (px * py));
 
  generate t1, t2, t1_t2_f, mutual_info as mi;
 }
