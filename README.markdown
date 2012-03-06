@@ -115,6 +115,8 @@ ant
 
 extract quantiles
 
+( if i was to redo this i'd use StreamingQuantile to avoid the sort )
+
 <pre>
 -- quantiles.pig
 set default_parallel 36;
